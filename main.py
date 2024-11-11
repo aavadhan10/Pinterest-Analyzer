@@ -376,6 +376,13 @@ if st.button("Analyze Style") and image_urls:
                 accessory_counts = Counter(all_accessory_ideas).most_common(5)
                 for accessory, count in accessory_counts:
                     frequency = f"(Suggested {count} {'time' if count == 1 else 'times'})"
+                    st.write(f"- {makeup} {frequency}")
+            
+            if all_accessory_ideas:
+                st.write("#### 👜 Accessory Ideas")
+                accessory_counts = Counter(all_accessory_ideas).most_common(5)
+                for accessory, count in accessory_counts:
+                    frequency = f"(Suggested {count} {'time' if count == 1 else 'times'})"
                     st.write(f"- {accessory} {frequency}")
             
             # Add final style tips
@@ -411,3 +418,4 @@ with st.sidebar:
     - Choose images with similar style direction
     - Include different angles/variations of the style
     """)
+                   
