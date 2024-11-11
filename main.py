@@ -10,463 +10,280 @@ from anthropic import Anthropic
 import base64
 import re
 from bs4 import BeautifulSoup
-import urllib.parse
 import time
 from typing import List, Dict
 
 st.set_page_config(
-    page_title="Pinterest Style Analyzer",
+    page_title="Pinterest Style Profile Analyzer",
     page_icon="👗",
     layout="wide"
 )
 
-st.title("Pinterest Style Analyzer")
-st.write("Analyze individual pins or entire boards to discover your style profile")
+st.title("Pinterest Style Profile Analyzer")
+st.write("Analyze your Pinterest style from individual pins or an entire board")
 
 # Initialize Anthropic client
 anthropic = Anthropic(api_key=st.secrets["ANTHROPIC_API_KEY"])
 
-# Add sidebar with instructions
+# Sidebar instructions
 with st.sidebar:
     st.write("### How to Use")
     st.write("""
-    1. Choose between analyzing individual pins or a Pinterest board
-    2. For individual pins:
-       - Copy the Pinterest URLs
-       - Paste URLs (one per line) in the text box
-    3. For boards:
-       - Copy the board URL
-       - Paste the single board URL
-    4. Click 'Analyze Style' to get:
-       - Individual image analysis
-       - Overall style profile
+    1. Choose your input type:
+       - Individual pins: Enter multiple Pinterest URLs
+       - Board: Enter a single board URL
+    2. Click 'Analyze Style' to get:
+       - Your color palette
+       - Key pieces
+       - Style elements
        - Personalized recommendations
-       - Styling tips
     """)
     
-    st.write("### Tips for Best Results")
+    st.write("### Pro Tips")
     st.write("""
-    - Use clear, full-body outfit images
-    - For individual pins, use 3-5 images
-    - For boards, first 10 pins will be analyzed
-    - Choose images with similar style direction
-    - Include different angles/variations of the style
-    """)
-    
-    st.write("### Board Analysis Tips")
-    st.write("""
-    When analyzing boards:
-    - Limited to first 10 pins for performance
-    - Each pin analysis is collapsible
-    - Overall summary combines all analyzed pins
-    - Larger boards may take longer to process
+    - Boards give better results than individual pins
+    - More pins = more accurate analysis
+    - Use fashion/outfit focused pins
+    - Mix of full body and detail shots work best
     """)
 
-def extract_pins_from_board(board_url):
-    """Extract all pin URLs from a Pinterest board"""
-    try:
-        headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
-        }
-        response = requests.get(board_url, headers=headers)
-        response.raise_for_status()
-        
-        soup = BeautifulSoup(response.text, 'html.parser')
-        pin_urls = []
-        
-        pin_links = soup.find_all('a', href=re.compile(r'/pin/\d+'))
-        for link in pin_links:
-            pin_url = f"https://pinterest.com{link['href']}"
-            if pin_url not in pin_urls:
-                pin_urls.append(pin_url)
-        
-        pin_elements = soup.find_all(attrs={"data-pin-id": True})
-        for element in pin_elements:
-            pin_id = element.get("data-pin-id")
-            pin_url = f"https://pinterest.com/pin/{pin_id}"
-            if pin_url not in pin_urls:
-                pin_urls.append(pin_url)
-        
-        if not pin_urls:
-            return False, None, "No pins found in board"
-        return True, pin_urls, None
-        
-    except Exception as e:
-        return False, None, f"Error extracting pins from board: {str(e)}"
-
-def extract_pinterest_image_url(pin_url):
-    """Extract the actual image URL from a Pinterest pin URL"""
-    try:
-        headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
-        }
-        
-        response = requests.get(pin_url, headers=headers)
-        response.raise_for_status()
-        
-        soup = BeautifulSoup(response.text, 'html.parser')
-        
-        og_image = soup.find('meta', property='og:image')
-        if og_image and og_image.get('content'):
-            return True, og_image['content'], None
-            
-        images = soup.find_all('img', {'src': re.compile(r'https://i\.pinimg\.com/.*?\.jpg')})
-        if images:
-            image_urls = [img['src'] for img in images]
-            for url in image_urls:
-                if 'originals' in url or '736x' in url:
-                    return True, url, None
-            return True, image_urls[0], None
-        
-        return False, None, "Could not find image URL in Pinterest page"
-        
-    except Exception as e:
-        return False, None, f"Error extracting Pinterest image: {str(e)}"
-
-def validate_image_url(url):
-    """Validate if URL returns a valid image"""
-    try:
-        if 'pinterest.com' in url:
-            success, image_url, error = extract_pinterest_image_url(url)
-            if not success:
-                return False, None, error
-            url = image_url
-        
-        headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
-        }
-        
-        response = requests.get(url, headers=headers, timeout=10)
-        response.raise_for_status()
-        
-        content_type = response.headers.get('content-type', '')
-        if not any(img_type in content_type.lower() for img_type in ['image/', 'application/octet-stream']):
-            return False, None, "URL does not point to an image"
-        
-        return True, response.content, None
-    except requests.RequestException as e:
-        return False, None, f"Error fetching URL: {str(e)}"
-
-def get_dominant_colors(img, n_colors=5):
-    """Extract dominant colors from image"""
-    try:
-        img = img.resize((150, 150))
-        pixels = np.array(img).reshape(-1, 3)
-        
-        kmeans = KMeans(n_clusters=n_colors, random_state=42)
-        kmeans.fit(pixels)
-        
-        colors = kmeans.cluster_centers_
-        labels = kmeans.labels_
-        counts = Counter(labels)
-        
-        total_pixels = sum(counts.values())
-        color_info = []
-        
-        for i in range(n_colors):
-            rgb = tuple(map(int, colors[i]))
-            hex_color = '#{:02x}{:02x}{:02x}'.format(*rgb)
-            percentage = (counts[i] / total_pixels) * 100
-            color_info.append({
-                'hex': hex_color,
-                'percentage': percentage
-            })
-        
-        return True, sorted(color_info, key=lambda x: x['percentage'], reverse=True), None
-    except Exception as e:
-        return False, None, f"Error analyzing colors: {str(e)}"
-
-def analyze_with_claude(image):
-    """Analyze image style using Claude"""
-    try:
-        buffered = io.BytesIO()
-        image.save(buffered, format="JPEG")
-        base64_image = base64.b64encode(buffered.getvalue()).decode('utf-8')
-        
-        prompt = """Analyze this image as a style expert and provide both analysis and recommendations. Focus on:
-
-        1. ANALYSIS:
-        - Key fashion pieces and their defining features (e.g., 'cropped leather jacket with silver hardware')
-        - Color scheme and significant color combinations
-        - Hair style and notable hair features
-        - Notable style elements and aesthetic
-        - Accessories and how they complete the look
-        
-        2. RECOMMENDATIONS:
-        - Suggest 2-3 complete outfit combinations that would fit this style aesthetic
-        - Recommend complementary hair styles that match this look
-        - Suggest makeup approaches that would enhance this style
-        - Propose accessories that would work well with this style
-        
-        Format response as JSON with these keys: 
-        {
-            "analysis": {
-                "key_pieces": ["item1", "item2"],
-                "color_scheme": ["color1", "color2"],
-                "hair_style": ["feature1", "feature2"],
-                "style_elements": ["element1", "element2"],
-                "accessories": ["accessory1", "accessory2"]
-            },
-            "recommendations": {
-                "outfit_combos": ["complete outfit 1", "complete outfit 2"],
-                "hair_suggestions": ["hair style 1", "hair style 2"],
-                "makeup_tips": ["makeup tip 1", "makeup tip 2"],
-                "accessory_ideas": ["accessory idea 1", "accessory idea 2"]
+def extract_pinterest_urls(input_url: str) -> List[str]:
+    """Extract pins from either a board URL or individual pin URLs"""
+    if 'pinterest.com/pin/' in input_url:
+        # Individual pins
+        return [url.strip() for url in input_url.split('\n') if url.strip()]
+    else:
+        # Board URL
+        try:
+            headers = {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
             }
-        }
-        
-        Be specific and descriptive in both analysis and recommendations."""
-        
-        response = anthropic.beta.messages.create(
-            model="claude-3-sonnet-20240229",
-            max_tokens=1000,
-            messages=[
-                {
-                    "role": "user",
-                    "content": [
-                        {
-                            "type": "text",
-                            "text": prompt
-                        },
-                        {
-                            "type": "image",
-                            "source": {
-                                "type": "base64",
-                                "media_type": "image/jpeg",
-                                "data": base64_image
-                            }
-                        }
-                    ]
-                }
-            ]
-        )
-        
-        try:
-            return True, json.loads(response.content[0].text), None
-        except json.JSONDecodeError:
-            return False, None, "Error parsing Claude's response"
+            response = requests.get(input_url, headers=headers)
+            soup = BeautifulSoup(response.text, 'html.parser')
             
-    except Exception as e:
-        return False, None, f"Error during Claude analysis: {str(e)}"
-
-def analyze_board_with_progress(urls: List[str]) -> Dict:
-    """Analyze multiple pins with progress tracking and rate limiting"""
-    
-    progress_bar = st.progress(0)
-    status_text = st.empty()
-    
-    all_colors = []
-    all_analyses = []
-    total_urls = len(urls)
-    
-    for idx, url in enumerate(urls):
-        progress = (idx + 1) / total_urls
-        progress_bar.progress(progress)
-        status_text.write(f"Processing pin {idx + 1} of {total_urls}")
-        
-        time.sleep(1)
-        
-        valid, image_data, error = validate_image_url(url)
-        if not valid:
-            st.warning(f"Skipping pin {idx + 1}: {error}")
-            continue
-            
-        try:
-            img = Image.open(io.BytesIO(image_data)).convert('RGB')
-            
-            with st.expander(f"Pin {idx + 1} Analysis", expanded=False):
-                st.image(img, width=300)
-                
-                color_success, colors, color_error = get_dominant_colors(img)
-                if color_success:
-                    all_colors.extend(colors)
-                    
-                    st.write("🎨 **Color Palette:**")
-                    cols = st.columns(5)
-                    for i, color in enumerate(colors[:5]):
-                        cols[i].markdown(
-                            f'<div style="background-color: {color["hex"]}; height: 50px; border-radius: 5px;"></div>',
-                            unsafe_allow_html=True
-                        )
-                
-                analysis_success, analysis, analysis_error = analyze_with_claude(img)
-                if analysis_success:
-                    all_analyses.append(analysis)
-                    
-                    if analysis.get("analysis", {}):
-                        st.write("#### 📸 Analysis")
-                        
-                        for key, emoji in [
-                            ("key_pieces", "🛍️ **Key Pieces:**"),
-                            ("color_scheme", "🎨 **Color Scheme:**"),
-                            ("hair_style", "💇‍♀️ **Hair Style:**"),
-                            ("accessories", "✨ **Accessories:**"),
-                            ("style_elements", "👗 **Style Elements:**")
-                        ]:
-                            if analysis["analysis"].get(key):
-                                st.write(emoji)
-                                for item in analysis["analysis"][key]:
-                                    st.write(f"- {item}")
-                    
-                    if analysis.get("recommendations", {}):
-                        st.write("#### 💫 Style Recommendations")
-                        
-                        for key, emoji in [
-                            ("outfit_combos", "👔 **Outfit Combinations:**"),
-                            ("hair_suggestions", "💁‍♀️ **Hair Style Ideas:**"),
-                            ("makeup_tips", "💄 **Makeup Tips:**"),
-                            ("accessory_ideas", "👜 **Accessory Ideas:**")
-                        ]:
-                            if analysis["recommendations"].get(key):
-                                st.write(emoji)
-                                for item in analysis["recommendations"][key]:
-                                    st.write(f"- {item}")
-                
+            pins = []
+            # Find pin URLs
+            for link in soup.find_all('a', href=re.compile(r'/pin/\d+')):
+                pin_url = f"https://pinterest.com{link['href']}"
+                if pin_url not in pins:
+                    pins.append(pin_url)
+            return pins
         except Exception as e:
-            st.warning(f"Error processing pin {idx + 1}: {str(e)}")
+            st.error(f"Error extracting pins: {str(e)}")
+            return []
+
+def analyze_style_profile(urls: List[str], max_pins: int = 20) -> Dict:
+    """Analyze multiple pins and aggregate the results"""
+    
+    if len(urls) > max_pins:
+        st.info(f"⚡ Analyzing {max_pins} pins for optimal performance")
+        urls = urls[:max_pins]
+    
+    # Setup progress tracking
+    progress_bar = st.progress(0)
+    status = st.empty()
+    
+    # Collection variables
+    all_colors = []
+    all_pieces = []
+    all_styles = []
+    all_hair_styles = []
+    all_accessories = []
+    all_outfit_ideas = []
+    all_makeup_tips = []
+    
+    # Process each pin
+    for idx, url in enumerate(urls):
+        progress = (idx + 1) / len(urls)
+        progress_bar.progress(progress)
+        status.write(f"Analyzing pin {idx + 1} of {len(urls)}")
+        
+        try:
+            # Get image from pin
+            headers = {'User-Agent': 'Mozilla/5.0'}
+            response = requests.get(url, headers=headers)
+            soup = BeautifulSoup(response.text, 'html.parser')
+            
+            # Find image URL
+            img_url = None
+            og_image = soup.find('meta', property='og:image')
+            if og_image and og_image.get('content'):
+                img_url = og_image['content']
+            
+            if not img_url:
+                continue
+                
+            # Get image
+            img_response = requests.get(img_url, headers=headers)
+            img = Image.open(io.BytesIO(img_response.content)).convert('RGB')
+            
+            # Color analysis
+            img_small = img.resize((150, 150))
+            pixels = np.array(img_small).reshape(-1, 3)
+            kmeans = KMeans(n_clusters=5, random_state=42)
+            kmeans.fit(pixels)
+            colors = kmeans.cluster_centers_
+            
+            # Convert colors to hex
+            for color in colors:
+                rgb = tuple(map(int, color))
+                hex_color = '#{:02x}{:02x}{:02x}'.format(*rgb)
+                all_colors.append(hex_color)
+            
+            # Style analysis with Claude
+            buffered = io.BytesIO()
+            img.save(buffered, format="JPEG")
+            base64_image = base64.b64encode(buffered.getvalue()).decode('utf-8')
+            
+            prompt = """Analyze this fashion image and provide only key details about:
+            1. Main pieces/items shown
+            2. Style elements and aesthetic
+            3. Hair style features
+            4. Accessories
+            5. One outfit combination suggestion
+            6. One makeup suggestion that matches the style
+
+            Format as JSON with keys: pieces, style_elements, hair_style, accessories, outfit_suggestion, makeup_suggestion"""
+            
+            response = anthropic.beta.messages.create(
+                model="claude-3-sonnet-20240229",
+                max_tokens=500,
+                messages=[
+                    {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "text",
+                                "text": prompt
+                            },
+                            {
+                                "type": "image",
+                                "source": {
+                                    "type": "base64",
+                                    "media_type": "image/jpeg",
+                                    "data": base64_image
+                                }
+                            }
+                        ]
+                    }
+                ]
+            )
+            
+            analysis = json.loads(response.content[0].text)
+            
+            # Collect results
+            all_pieces.extend(analysis.get('pieces', []))
+            all_styles.extend(analysis.get('style_elements', []))
+            all_hair_styles.extend(analysis.get('hair_style', []))
+            all_accessories.extend(analysis.get('accessories', []))
+            all_outfit_ideas.append(analysis.get('outfit_suggestion'))
+            all_makeup_tips.append(analysis.get('makeup_suggestion'))
+            
+            # Small delay to prevent rate limiting
+            time.sleep(1)
+            
+        except Exception as e:
             continue
     
+    # Clear progress indicators
     progress_bar.empty()
-    status_text.empty()
+    status.empty()
     
+    # Return aggregated results
     return {
-        "colors": all_colors,
-        "analyses": all_analyses
+        'colors': Counter(all_colors).most_common(8),
+        'pieces': Counter(all_pieces).most_common(10),
+        'styles': Counter(all_styles).most_common(6),
+        'hair_styles': Counter(all_hair_styles).most_common(5),
+        'accessories': Counter(all_accessories).most_common(6),
+        'outfit_ideas': Counter([x for x in all_outfit_ideas if x]).most_common(5),
+        'makeup_tips': Counter([x for x in all_makeup_tips if x]).most_common(4)
     }
 
-input_type = st.radio(
-    "Select input type:",
-    ["Individual Pins", "Pinterest Board"]
-)
-
-if input_type == "Individual Pins":
-    urls_input = st.text_area("Enter Pinterest pin URLs (one per line)")
-else:
-    urls_input = st.text_input("Enter Pinterest board URL")
-
-def display_style_summary(all_colors, all_analyses):
-    """Display comprehensive style summary and recommendations"""
-    st.write("## 📊 Overall Style Profile & Recommendations")
+def display_style_profile(results: Dict):
+    """Display aggregated style profile results"""
+    st.write("# 🎯 Your Style Profile")
     
-    if all_colors:
+    # Color palette
+    if results['colors']:
         st.write("### 🎨 Color Palette")
-        color_counts = Counter([color['hex'] for color in all_colors])
-        top_colors = color_counts.most_common(8)
-        
-        cols = st.columns(8)
-        for i, (color, count) in enumerate(top_colors):
-            cols[i].markdown(
-                f'<div style="background-color: {color}; height: 50px; border-radius: 5px;"></div>',
+        cols = st.columns(len(results['colors']))
+        for idx, (color, count) in enumerate(results['colors']):
+            cols[idx].markdown(
+                f'<div style="background-color: {color}; height: 60px; border-radius: 5px;" title="Used {count} times"></div>',
                 unsafe_allow_html=True
             )
     
-    all_pieces = [piece for analysis in all_analyses for piece in analysis.get("analysis", {}).get("key_pieces", [])]
-    common_pieces = Counter(all_pieces).most_common(8)
+    # Two-column layout for main content
+    col1, col2 = st.columns(2)
     
-    if common_pieces:
-        st.write("### 🛍️ Signature Pieces")
-        for piece, count in common_pieces:
-            frequency = f"(Found in {count} {'image' if count == 1 else 'images'})"
-            st.write(f"- {piece} {frequency}")
+    with col1:
+        # Key pieces
+        if results['pieces']:
+            st.write("### 🛍️ Signature Pieces")
+            for piece, count in results['pieces']:
+                percentage = (count / len(results['pieces'])) * 100
+                st.write(f"- {piece} ({percentage:.0f}%)")
+        
+        # Style elements
+        if results['styles']:
+            st.write("### 👗 Style Direction")
+            for style, count in results['styles']:
+                percentage = (count / len(results['styles'])) * 100
+                st.write(f"- {style} ({percentage:.0f}%)")
+        
+        # Hair styles
+        if results['hair_styles']:
+            st.write("### 💇‍♀️ Hair Styles")
+            for style, count in results['hair_styles']:
+                percentage = (count / len(results['hair_styles'])) * 100
+                st.write(f"- {style} ({percentage:.0f}%)")
     
-    all_hair = [style for analysis in all_analyses for style in analysis.get("analysis", {}).get("hair_style", [])]
-    common_hair = Counter(all_hair).most_common(5)
-    
-    if common_hair:
-        st.write("### 💇‍♀️ Defining Hair Styles")
-        for style, count in common_hair:
-            frequency = f"(Found in {count} {'image' if count == 1 else 'images'})"
-            st.write(f"- {style} {frequency}")
-    
-    all_elements = [elem for analysis in all_analyses for elem in analysis.get("analysis", {}).get("style_elements", [])]
-    common_elements = Counter(all_elements).most_common(5)
-    
-    if common_elements:
-        st.write("### 👗 Overall Style Direction")
-        for element, count in common_elements:
-            frequency = f"(Found in {count} {'image' if count == 1 else 'images'})"
-            st.write(f"- {element} {frequency}")
-    
-    st.write("### 💫 Style Recommendations")
-    
-    all_outfits = [outfit for analysis in all_analyses for outfit in analysis.get("recommendations", {}).get("outfit_combos", [])]
-    outfit_counts = Counter(all_outfits).most_common(6)
-    
-    if outfit_counts:
-        st.write("#### 👔 Top Outfit Combinations")
-        for outfit, count in outfit_counts:
-            frequency = f"(Suggested {count} {'time' if count == 1 else 'times'})"
-            st.write(f"- {outfit} {frequency}")
-    
-    all_hair_ideas = [hair for analysis in all_analyses for hair in analysis.get("recommendations", {}).get("hair_suggestions", [])]
-    hair_counts = Counter(all_hair_ideas).most_common(4)
-    
-    if hair_counts:
-        st.write("#### 💁‍♀️ Recommended Hair Styles")
-        for hair, count in hair_counts:
-            frequency = f"(Suggested {count} {'time' if count == 1 else 'times'})"
-            st.write(f"- {hair} {frequency}")
-    
-    all_makeup = [tip for analysis in all_analyses for tip in analysis.get("recommendations", {}).get("makeup_tips", [])]
-    makeup_counts = Counter(all_makeup).most_common(4)
-    
-    if makeup_counts:
-        st.write("#### 💄 Makeup Suggestions")
-        for makeup, count in makeup_counts:
-            frequency = f"(Suggested {count} {'time' if count == 1 else 'times'})"
-            st.write(f"- {makeup} {frequency}")
-    
-    all_accessories = [acc for analysis in all_analyses for acc in analysis.get("recommendations", {}).get("accessory_ideas", [])]
-    accessory_counts = Counter(all_accessories).most_common(5)
-    
-    if accessory_counts:
-        st.write("#### 👜 Accessory Ideas")
-        for accessory, count in accessory_counts:
-            frequency = f"(Suggested {count} {'time' if count == 1 else 'times'})"
-            st.write(f"- {accessory} {frequency}")
-    
-    st.write("### 💭 Styling Tips")
-    st.write("""
-    - Mix and match the suggested pieces to create your own unique combinations
-    - Use the color palette as a guide when shopping for new items
-    - Try different hair and makeup combinations for various occasions
-    - Start with basic pieces and add statement accessories to elevate the look
-    """)
+    with col2:
+        # Accessories
+        if results['accessories']:
+            st.write("### ✨ Key Accessories")
+            for acc, count in results['accessories']:
+                percentage = (count / len(results['accessories'])) * 100
+                st.write(f"- {acc} ({percentage:.0f}%)")
+        
+        # Outfit ideas
+        if results['outfit_ideas']:
+            st.write("### 👔 Outfit Combinations")
+            for outfit, _ in results['outfit_ideas']:
+                st.write(f"- {outfit}")
+        
+        # Makeup tips
+        if results['makeup_tips']:
+            st.write("### 💄 Makeup Suggestions")
+            for tip, _ in results['makeup_tips']:
+                st.write(f"- {tip}")
+
+# Main app logic
+input_type = st.radio("Select input type:", ["Pinterest Board", "Individual Pins"])
+
+if input_type == "Pinterest Board":
+    urls_input = st.text_input("Enter Pinterest board URL")
+else:
+    urls_input = st.text_area("Enter Pinterest pin URLs (one per line)")
 
 if st.button("Analyze Style"):
     if not urls_input:
-        st.error("Please enter a URL")
+        st.error("Please enter URL(s)")
     else:
-        if input_type == "Individual Pins":
-            urls = [url.strip() for url in urls_input.split('\n') if url.strip()]
-            if not urls:
-                st.error("Please enter at least one valid URL")
+        with st.spinner("🔍 Analyzing your style..."):
+            # Get pins
+            pins = extract_pinterest_urls(urls_input)
+            
+            if not pins:
+                st.error("No pins found to analyze")
             else:
-                results = analyze_board_with_progress(urls)
-                if results["analyses"]:
-                    display_style_summary(results["colors"], results["analyses"])
-        else:
-            with st.spinner("Extracting pins from board..."):
-                success, board_pins, error = extract_pins_from_board(urls_input)
-                if not success:
-                    st.error(f"Error processing board: {error}")
-                    st.stop()
+                # Analyze pins
+                st.write(f"📌 Found {len(pins)} pins to analyze")
+                results = analyze_style_profile(pins)
                 
-                if not board_pins:
-                    st.error("No pins found in board")
-                    st.stop()
-                
-                if len(board_pins) > 10:
-                    st.write("⚠️ Analyzing first 10 pins for performance reasons")
-                    board_pins = board_pins[:10]
-                
-                st.write(f"Found {len(board_pins)} pins to analyze")
-                
-                results = analyze_board_with_progress(board_pins)
-                
-                if results["analyses"]:
-                    display_style_summary(results["colors"], results["analyses"])
+                # Display results
+                display_style_profile(results)
 
 st.markdown("---")
-st.write("Note: For best results, use clear, front-facing outfit images.")
-
+st.caption("Made with ❤️ for fashion enthusiasts")
