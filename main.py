@@ -118,24 +118,39 @@ def analyze_with_claude(image):
         image.save(buffered, format="JPEG")
         base64_image = base64.b64encode(buffered.getvalue()).decode('utf-8')
         
-        prompt = """Analyze this image as a style expert. Focus on identifying:
+        prompt = """Analyze this image as a style expert and provide both analysis and recommendations. Focus on:
 
-        1. Key fashion pieces/items and their defining features (e.g., 'cropped leather jacket with silver hardware', 'high-waisted wide-leg trousers')
-        2. Color scheme and significant color combinations
-        3. Hair style and notable hair features (e.g., 'long layers with face-framing pieces', 'slicked-back low bun')
-        4. Notable style elements (e.g., 'minimalist Scandinavian', 'Y2K revival', '90s grunge')
-        5. Accessories and how they complete the look
-
+        1. ANALYSIS:
+        - Key fashion pieces and their defining features (e.g., 'cropped leather jacket with silver hardware')
+        - Color scheme and significant color combinations
+        - Hair style and notable hair features
+        - Notable style elements and aesthetic
+        - Accessories and how they complete the look
+        
+        2. RECOMMENDATIONS:
+        - Suggest 2-3 complete outfit combinations that would fit this style aesthetic
+        - Recommend complementary hair styles that match this look
+        - Suggest makeup approaches that would enhance this style
+        - Propose accessories that would work well with this style
+        
         Format response as JSON with these keys: 
         {
-            "key_pieces": ["item1", "item2"],
-            "color_scheme": ["color1", "color2"],
-            "hair_style": ["feature1", "feature2"],
-            "style_elements": ["element1", "element2"],
-            "accessories": ["accessory1", "accessory2"]
+            "analysis": {
+                "key_pieces": ["item1", "item2"],
+                "color_scheme": ["color1", "color2"],
+                "hair_style": ["feature1", "feature2"],
+                "style_elements": ["element1", "element2"],
+                "accessories": ["accessory1", "accessory2"]
+            },
+            "recommendations": {
+                "outfit_combos": ["complete outfit 1", "complete outfit 2"],
+                "hair_suggestions": ["hair style 1", "hair style 2"],
+                "makeup_tips": ["makeup tip 1", "makeup tip 2"],
+                "accessory_ideas": ["accessory idea 1", "accessory idea 2"]
+            }
         }
         
-        Be specific and descriptive in identifying each element."""
+        Be specific and descriptive in both analysis and recommendations."""
         
         response = anthropic.beta.messages.create(
             model="claude-3-sonnet-20240229",
@@ -215,30 +230,56 @@ if st.button("Analyze Style") and image_urls:
                 st.write("### Style Analysis")
                     
                 if analysis:
-                    if analysis.get("key_pieces"):
+                    # Analysis section
+                    st.write("#### 📸 Analysis")
+                    
+                    if analysis.get("analysis", {}).get("key_pieces"):
                         st.write("🛍️ **Key Pieces:**")
-                        for piece in analysis["key_pieces"]:
+                        for piece in analysis["analysis"]["key_pieces"]:
                             st.write(f"- {piece}")
                     
-                    if analysis.get("color_scheme"):
+                    if analysis.get("analysis", {}).get("color_scheme"):
                         st.write("🎨 **Color Scheme:**")
-                        for color in analysis["color_scheme"]:
+                        for color in analysis["analysis"]["color_scheme"]:
                             st.write(f"- {color}")
                     
-                    if analysis.get("hair_style"):
+                    if analysis.get("analysis", {}).get("hair_style"):
                         st.write("💇‍♀️ **Hair Style:**")
-                        for style in analysis["hair_style"]:
+                        for style in analysis["analysis"]["hair_style"]:
                             st.write(f"- {style}")
                     
-                    if analysis.get("accessories"):
+                    if analysis.get("analysis", {}).get("accessories"):
                         st.write("✨ **Accessories:**")
-                        for accessory in analysis["accessories"]:
+                        for accessory in analysis["analysis"]["accessories"]:
                             st.write(f"- {accessory}")
                     
-                    if analysis.get("style_elements"):
+                    if analysis.get("analysis", {}).get("style_elements"):
                         st.write("👗 **Style Elements:**")
-                        for element in analysis["style_elements"]:
+                        for element in analysis["analysis"]["style_elements"]:
                             st.write(f"- {element}")
+                    
+                    # Recommendations section
+                    st.write("#### 💫 Style Recommendations")
+                    
+                    if analysis.get("recommendations", {}).get("outfit_combos"):
+                        st.write("👔 **Outfit Combinations:**")
+                        for outfit in analysis["recommendations"]["outfit_combos"]:
+                            st.write(f"- {outfit}")
+                    
+                    if analysis.get("recommendations", {}).get("hair_suggestions"):
+                        st.write("💁‍♀️ **Hair Style Ideas:**")
+                        for hair in analysis["recommendations"]["hair_suggestions"]:
+                            st.write(f"- {hair}")
+                    
+                    if analysis.get("recommendations", {}).get("makeup_tips"):
+                        st.write("💄 **Makeup Tips:**")
+                        for tip in analysis["recommendations"]["makeup_tips"]:
+                            st.write(f"- {tip}")
+                    
+                    if analysis.get("recommendations", {}).get("accessory_ideas"):
+                        st.write("👜 **Accessory Suggestions:**")
+                        for idea in analysis["recommendations"]["accessory_ideas"]:
+                            st.write(f"- {idea}")
                 
                 st.markdown("---")
                 
@@ -247,7 +288,7 @@ if st.button("Analyze Style") and image_urls:
                 continue
         
         if all_analyses:
-            st.write("## 📊 Overall Style Profile")
+            st.write("## 📊 Overall Style Profile & Recommendations")
             
             # Show dominant color palette
             if all_colors:
@@ -263,7 +304,7 @@ if st.button("Analyze Style") and image_urls:
                     )
             
             # Aggregate key pieces
-            all_pieces = [piece for analysis in all_analyses for piece in analysis.get("key_pieces", [])]
+            all_pieces = [piece for analysis in all_analyses for piece in analysis.get("analysis", {}).get("key_pieces", [])]
             common_pieces = Counter(all_pieces).most_common(8)
             
             if common_pieces:
@@ -273,7 +314,7 @@ if st.button("Analyze Style") and image_urls:
                     st.write(f"- {piece} {frequency}")
             
             # Aggregate hair styles
-            all_hair = [style for analysis in all_analyses for style in analysis.get("hair_style", [])]
+            all_hair = [style for analysis in all_analyses for style in analysis.get("analysis", {}).get("hair_style", [])]
             common_hair = Counter(all_hair).most_common(5)
             
             if common_hair:
@@ -282,18 +323,8 @@ if st.button("Analyze Style") and image_urls:
                     frequency = f"(Found in {count} {'image' if count == 1 else 'images'})"
                     st.write(f"- {style} {frequency}")
             
-            # Aggregate accessories
-            all_accessories = [acc for analysis in all_analyses for acc in analysis.get("accessories", [])]
-            common_accessories = Counter(all_accessories).most_common(6)
-            
-            if common_accessories:
-                st.write("### ✨ Key Accessories")
-                for acc, count in common_accessories:
-                    frequency = f"(Found in {count} {'image' if count == 1 else 'images'})"
-                    st.write(f"- {acc} {frequency}")
-            
             # Aggregate style elements
-            all_elements = [elem for analysis in all_analyses for elem in analysis.get("style_elements", [])]
+            all_elements = [elem for analysis in all_analyses for elem in analysis.get("analysis", {}).get("style_elements", [])]
             common_elements = Counter(all_elements).most_common(5)
             
             if common_elements:
@@ -301,6 +332,82 @@ if st.button("Analyze Style") and image_urls:
                 for element, count in common_elements:
                     frequency = f"(Found in {count} {'image' if count == 1 else 'images'})"
                     st.write(f"- {element} {frequency}")
+            
+            # Aggregate all recommendations
+            all_outfits = []
+            all_hair_ideas = []
+            all_makeup_tips = []
+            all_accessory_ideas = []
+            
+            for analysis in all_analyses:
+                recs = analysis.get("recommendations", {})
+                all_outfits.extend(recs.get("outfit_combos", []))
+                all_hair_ideas.extend(recs.get("hair_suggestions", []))
+                all_makeup_tips.extend(recs.get("makeup_tips", []))
+                all_accessory_ideas.extend(recs.get("accessory_ideas", []))
+            
+            # Display aggregated recommendations
+            st.write("### 💫 Style Recommendations")
+            
+            if all_outfits:
+                st.write("#### 👔 Top Outfit Combinations")
+                outfit_counts = Counter(all_outfits).most_common(6)
+                for outfit, count in outfit_counts:
+                    frequency = f"(Suggested {count} {'time' if count == 1 else 'times'})"
+                    st.write(f"- {outfit} {frequency}")
+            
+            if all_hair_ideas:
+                st.write("#### 💁‍♀️ Recommended Hair Styles")
+                hair_counts = Counter(all_hair_ideas).most_common(4)
+                for hair, count in hair_counts:
+                    frequency = f"(Suggested {count} {'time' if count == 1 else 'times'})"
+                    st.write(f"- {hair} {frequency}")
+            
+            if all_makeup_tips:
+                st.write("#### 💄 Makeup Suggestions")
+                makeup_counts = Counter(all_makeup_tips).most_common(4)
+                for makeup, count in makeup_counts:
+                    frequency = f"
+                    frequency = f"(Suggested {count} {'time' if count == 1 else 'times'})"
+                    st.write(f"- {makeup} {frequency}")
+            
+            if all_accessory_ideas:
+                st.write("#### 👜 Accessory Ideas")
+                accessory_counts = Counter(all_accessory_ideas).most_common(5)
+                for accessory, count in accessory_counts:
+                    frequency = f"(Suggested {count} {'time' if count == 1 else 'times'})"
+                    st.write(f"- {accessory} {frequency}")
+            
+            # Add final style tips
+            st.write("### 💭 Styling Tips")
+            st.write("""
+            - Mix and match the suggested pieces to create your own unique combinations
+            - Use the color palette as a guide when shopping for new items
+            - Try different hair and makeup combinations for various occasions
+            - Start with basic pieces and add statement accessories to elevate the look
+            """)
 
 st.markdown("---")
 st.write("Note: For best results, use direct image URLs from Pinterest pins.")
+
+# Add sidebar with instructions
+with st.sidebar:
+    st.write("### How to Use")
+    st.write("""
+    1. Find Pinterest pins that represent your desired style
+    2. Copy the Pinterest URLs
+    3. Paste URLs (one per line) in the text box
+    4. Click 'Analyze Style' to get:
+        - Individual image analysis
+        - Overall style profile
+        - Personalized recommendations
+        - Styling tips
+    """)
+    
+    st.write("### Tips for Best Results")
+    st.write("""
+    - Use clear, full-body outfit images
+    - Include 3-5 images for better recommendations
+    - Choose images with similar style direction
+    - Include different angles/variations of the style
+    """)
