@@ -11,12 +11,96 @@ import base64
 import re
 from bs4 import BeautifulSoup
 import urllib.parse
+import time
+from typing import List, Dict
+
+st.set_page_config(
+    page_title="Pinterest Style Analyzer",
+    page_icon="👗",
+    layout="wide"
+)
 
 st.title("Pinterest Style Analyzer")
-st.write("Enter Pinterest image URLs to analyze their style")
+st.write("Analyze individual pins or entire boards to discover your style profile")
 
 # Initialize Anthropic client
 anthropic = Anthropic(api_key=st.secrets["ANTHROPIC_API_KEY"])
+
+# Add sidebar with instructions
+with st.sidebar:
+    st.write("### How to Use")
+    st.write("""
+    1. Choose between analyzing individual pins or a Pinterest board
+    2. For individual pins:
+       - Copy the Pinterest URLs
+       - Paste URLs (one per line) in the text box
+    3. For boards:
+       - Copy the board URL
+       - Paste the single board URL
+    4. Click 'Analyze Style' to get:
+       - Individual image analysis
+       - Overall style profile
+       - Personalized recommendations
+       - Styling tips
+    """)
+    
+    st.write("### Tips for Best Results")
+    st.write("""
+    - Use clear, full-body outfit images
+    - For individual pins, use 3-5 images
+    - For boards, first 10 pins will be analyzed
+    - Choose images with similar style direction
+    - Include different angles/variations of the style
+    """)
+    
+    st.write("### Board Analysis Tips")
+    st.write("""
+    When analyzing boards:
+    - Limited to first 10 pins for performance
+    - Each pin analysis is collapsible
+    - Overall summary combines all analyzed pins
+    - Larger boards may take longer to process
+    """)
+    def extract_pins_from_board(board_url):
+    """Extract all pin URLs from a Pinterest board"""
+    try:
+        # Add headers to mimic a browser request
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+        }
+        
+        # Get the board page content
+        response = requests.get(board_url, headers=headers)
+        response.raise_for_status()
+        
+        # Parse the HTML
+        soup = BeautifulSoup(response.text, 'html.parser')
+        
+        # Find all pin URLs
+        pin_urls = []
+        
+        # Method 1: Look for pin links
+        pin_links = soup.find_all('a', href=re.compile(r'/pin/\d+'))
+        for link in pin_links:
+            pin_url = f"https://pinterest.com{link['href']}"
+            if pin_url not in pin_urls:
+                pin_urls.append(pin_url)
+        
+        # Method 2: Look for pin IDs in data attributes
+        pin_elements = soup.find_all(attrs={"data-pin-id": True})
+        for element in pin_elements:
+            pin_id = element.get("data-pin-id")
+            pin_url = f"https://pinterest.com/pin/{pin_id}"
+            if pin_url not in pin_urls:
+                pin_urls.append(pin_url)
+        
+        if not pin_urls:
+            return False, None, "No pins found in board"
+        
+        return True, pin_urls, None
+        
+    except Exception as e:
+        return False, None, f"Error extracting pins from board: {str(e)}"
 
 def extract_pinterest_image_url(pin_url):
     """Extract the actual image URL from a Pinterest pin URL"""
@@ -81,7 +165,6 @@ def validate_image_url(url):
         return True, response.content, None
     except requests.RequestException as e:
         return False, None, f"Error fetching URL: {str(e)}"
-
 def get_dominant_colors(img, n_colors=5):
     """Extract dominant colors from image"""
     try:
@@ -184,237 +267,247 @@ def analyze_with_claude(image):
     except Exception as e:
         return False, None, f"Error during Claude analysis: {str(e)}"
 
-# Input for image URLs
-image_urls = st.text_area("Enter Pinterest image URLs (one per line)")
-
-if st.button("Analyze Style") and image_urls:
-    urls = [url.strip() for url in image_urls.split('\n') if url.strip()]
+def analyze_board_with_progress(urls: List[str]) -> Dict:
+    """Analyze multiple pins with progress tracking and rate limiting"""
     
-    if not urls:
-        st.error("Please enter at least one valid URL")
-    else:
-        all_colors = []
-        all_analyses = []
+    # Create a progress bar
+    progress_bar = st.progress(0)
+    status_text = st.empty()
+    
+    all_colors = []
+    all_analyses = []
+    total_urls = len(urls)
+    
+    for idx, url in enumerate(urls):
+        # Update progress
+        progress = (idx + 1) / total_urls
+        progress_bar.progress(progress)
+        status_text.write(f"Processing pin {idx + 1} of {total_urls}")
         
-        for url in urls[:5]:  # Limit to 5 images for demo
-            st.write(f"Processing: {url}")
+        # Add a small delay to prevent rate limiting
+        time.sleep(1)
+        
+        # Process the pin
+        valid, image_data, error = validate_image_url(url)
+        if not valid:
+            st.warning(f"Skipping pin {idx + 1}: {error}")
+            continue
             
-            # Validate and fetch image
-            valid, image_data, error = validate_image_url(url)
-            if not valid:
-                st.error(f"Error with URL {url}: {error}")
-                continue
-                
-            try:
-                # Open image
-                img = Image.open(io.BytesIO(image_data)).convert('RGB')
-                
+        try:
+            img = Image.open(io.BytesIO(image_data)).convert('RGB')
+            
+            # Create expandable section for each pin
+            with st.expander(f"Pin {idx + 1} Analysis", expanded=False):
                 # Display image
                 st.image(img, width=300)
                 
                 # Color analysis
                 color_success, colors, color_error = get_dominant_colors(img)
-                if not color_success:
-                    st.warning(f"Color analysis error: {color_error}")
-                else:
+                if color_success:
                     all_colors.extend(colors)
+                    
+                    # Display color palette
+                    st.write("🎨 **Color Palette:**")
+                    cols = st.columns(5)
+                    for i, color in enumerate(colors[:5]):
+                        cols[i].markdown(
+                            f'<div style="background-color: {color["hex"]}; height: 50px; border-radius: 5px;"></div>',
+                            unsafe_allow_html=True
+                        )
                 
                 # Claude analysis
                 analysis_success, analysis, analysis_error = analyze_with_claude(img)
-                if not analysis_success:
-                    st.warning(f"Style analysis error: {analysis_error}")
-                else:
+                if analysis_success:
                     all_analyses.append(analysis)
+                    
+                    # Display analysis results
+                    if analysis.get("analysis", {}):
+                        st.write("#### 📸 Analysis")
+                        
+                        for key, emoji in [
+                            ("key_pieces", "🛍️ **Key Pieces:**"),
+                            ("color_scheme", "🎨 **Color Scheme:**"),
+                            ("hair_style", "💇‍♀️ **Hair Style:**"),
+                            ("accessories", "✨ **Accessories:**"),
+                            ("style_elements", "👗 **Style Elements:**")
+                        ]:
+                            if analysis["analysis"].get(key):
+                                st.write(emoji)
+                                for item in analysis["analysis"][key]:
+                                    st.write(f"- {item}")
+                    
+                    if analysis.get("recommendations", {}):
+                        st.write("#### 💫 Style Recommendations")
+                        
+                        for key, emoji in [
+                            ("outfit_combos", "👔 **Outfit Combinations:**"),
+                            ("hair_suggestions", "💁‍♀️ **Hair Style Ideas:**"),
+                            ("makeup_tips", "💄 **Makeup Tips:**"),
+                            ("accessory_ideas", "👜 **Accessory Ideas:**")
+                        ]:
+                            if analysis["recommendations"].get(key):
+                                st.write(emoji)
+                                for item in analysis["recommendations"][key]:
+                                    st.write(f"- {item}")
                 
-                # Display individual image analysis
-                st.write("### Style Analysis")
-                    
-                if analysis:
-                    # Analysis section
-                    st.write("#### 📸 Analysis")
-                    
-                    if analysis.get("analysis", {}).get("key_pieces"):
-                        st.write("🛍️ **Key Pieces:**")
-                        for piece in analysis["analysis"]["key_pieces"]:
-                            st.write(f"- {piece}")
-                    
-                    if analysis.get("analysis", {}).get("color_scheme"):
-                        st.write("🎨 **Color Scheme:**")
-                        for color in analysis["analysis"]["color_scheme"]:
-                            st.write(f"- {color}")
-                    
-                    if analysis.get("analysis", {}).get("hair_style"):
-                        st.write("💇‍♀️ **Hair Style:**")
-                        for style in analysis["analysis"]["hair_style"]:
-                            st.write(f"- {style}")
-                    
-                    if analysis.get("analysis", {}).get("accessories"):
-                        st.write("✨ **Accessories:**")
-                        for accessory in analysis["analysis"]["accessories"]:
-                            st.write(f"- {accessory}")
-                    
-                    if analysis.get("analysis", {}).get("style_elements"):
-                        st.write("👗 **Style Elements:**")
-                        for element in analysis["analysis"]["style_elements"]:
-                            st.write(f"- {element}")
-                    
-                    # Recommendations section
-                    st.write("#### 💫 Style Recommendations")
-                    
-                    if analysis.get("recommendations", {}).get("outfit_combos"):
-                        st.write("👔 **Outfit Combinations:**")
-                        for outfit in analysis["recommendations"]["outfit_combos"]:
-                            st.write(f"- {outfit}")
-                    
-                    if analysis.get("recommendations", {}).get("hair_suggestions"):
-                        st.write("💁‍♀️ **Hair Style Ideas:**")
-                        for hair in analysis["recommendations"]["hair_suggestions"]:
-                            st.write(f"- {hair}")
-                    
-                    if analysis.get("recommendations", {}).get("makeup_tips"):
-                        st.write("💄 **Makeup Tips:**")
-                        for tip in analysis["recommendations"]["makeup_tips"]:
-                            st.write(f"- {tip}")
-                    
-                    if analysis.get("recommendations", {}).get("accessory_ideas"):
-                        st.write("👜 **Accessory Suggestions:**")
-                        for idea in analysis["recommendations"]["accessory_ideas"]:
-                            st.write(f"- {idea}")
-                
-                st.markdown("---")
-                
-            except Exception as e:
-                st.error(f"Error processing image: {str(e)}")
-                continue
+        except Exception as e:
+            st.warning(f"Error processing pin {idx + 1}: {str(e)}")
+            continue
+    
+    # Clear progress indicators
+    progress_bar.empty()
+    status_text.empty()
+    
+    return {
+        "colors": all_colors,
+        "analyses": all_analyses
+    }
+
+# Add radio button for input type
+input_type = st.radio(
+    "Select input type:",
+    ["Individual Pins", "Pinterest Board"]
+)
+
+if input_type == "Individual Pins":
+    urls_input = st.text_area("Enter Pinterest pin URLs (one per line)")
+else:
+    urls_input = st.text_input("Enter Pinterest board URL")
+
+def display_style_summary(all_colors, all_analyses):
+    """Display comprehensive style summary and recommendations"""
+    st.write("## 📊 Overall Style Profile & Recommendations")
+    
+    # Show dominant color palette
+    if all_colors:
+        st.write("### 🎨 Color Palette")
+        color_counts = Counter([color['hex'] for color in all_colors])
+        top_colors = color_counts.most_common(8)
         
-        if all_analyses:
-            st.write("## 📊 Overall Style Profile & Recommendations")
-            
-            # Show dominant color palette
-            if all_colors:
-                st.write("### 🎨 Color Palette")
-                color_counts = Counter([color['hex'] for color in all_colors])
-                top_colors = color_counts.most_common(8)
+        cols = st.columns(8)
+        for i, (color, count) in enumerate(top_colors):
+            cols[i].markdown(
+                f'<div style="background-color: {color}; height: 50px; border-radius: 5px;"></div>',
+                unsafe_allow_html=True
+            )
+    
+    # Aggregate key pieces
+    all_pieces = [piece for analysis in all_analyses for piece in analysis.get("analysis", {}).get("key_pieces", [])]
+    common_pieces = Counter(all_pieces).most_common(8)
+    
+    if common_pieces:
+        st.write("### 🛍️ Signature Pieces")
+        for piece, count in common_pieces:
+            frequency = f"(Found in {count} {'image' if count == 1 else 'images'})"
+            st.write(f"- {piece} {frequency}")
+    
+    # Aggregate hair styles
+    all_hair = [style for analysis in all_analyses for style in analysis.get("analysis", {}).get("hair_style", [])]
+    common_hair = Counter(all_hair).most_common(5)
+    
+    if common_hair:
+        st.write("### 💇‍♀️ Defining Hair Styles")
+        for style, count in common_hair:
+            frequency = f"(Found in {count} {'image' if count == 1 else 'images'})"
+            st.write(f"- {style} {frequency}")
+    
+    # Aggregate style elements
+    all_elements = [elem for analysis in all_analyses for elem in analysis.get("analysis", {}).get("style_elements", [])]
+    common_elements = Counter(all_elements).most_common(5)
+    
+    if common_elements:
+        st.write("### 👗 Overall Style Direction")
+        for element, count in common_elements:
+            frequency = f"(Found in {count} {'image' if count == 1 else 'images'})"
+            st.write(f"- {element} {frequency}")
+    
+    # Aggregate all recommendations
+    st.write("### 💫 Style Recommendations")
+    
+    # Outfit combinations
+    all_outfits = [outfit for analysis in all_analyses for outfit in analysis.get("recommendations", {}).get("outfit_combos", [])]
+    outfit_counts = Counter(all_outfits).most_common(6)
+    
+    if outfit_counts:
+        st.write("#### 👔 Top Outfit Combinations")
+        for outfit, count in outfit_counts:
+            frequency = f"(Suggested {count} {'time' if count == 1 else 'times'})"
+            st.write(f"- {outfit} {frequency}")
+    
+    # Hair suggestions
+    all_hair_ideas = [hair for analysis in all_analyses for hair in analysis.get("recommendations", {}).get("hair_suggestions", [])]
+    hair_counts = Counter(all_hair_ideas).most_common(4)
+    
+    if hair_counts:
+        st.write("#### 💁‍♀️ Recommended Hair Styles")
+        for hair, count in hair_counts:
+            frequency = f"(Suggested {count} {'time' if count == 1 else 'times'})"
+            st.write(f"- {hair} {frequency}")
+    
+    # Makeup tips
+    all_makeup = [tip for analysis in all_analyses for tip in analysis.get("recommendations", {}).get("makeup_tips", [])]
+    makeup_counts = Counter(all_makeup).most_common(4)
+    
+    if makeup_counts:
+        st.write("#### 💄 Makeup Suggestions")
+        for makeup, count in makeup_counts:
+            frequency = f"(Suggested {count} {'time' if count == 1 else 'times'})"
+            st.write(f"- {makeup} {frequency}")
+    
+    # Accessory ideas
+    all_accessories = [acc for analysis in all_analyses for acc in analysis.get("recommendations", {}).get("accessory_ideas", [])]
+    accessory_counts = Counter(all_accessories).most_common(5)
+    
+    if accessory_counts:
+        st.write("#### 👜 Accessory Ideas")
+        for accessory, count in accessory_counts:
+            frequency = f"(Suggested {count} {'time' if count == 1 else 'times'})"
+            st.write(f"- {accessory} {frequency}")
+    
+    # Add style tips
+    st.write("### 💭 Styling Tips")
+    st.write("""
+    - Mix and match the suggested pieces to create your own unique combinations
+    - Use the color palette as a guide when shopping for new items
+    - Try different hair and makeup combinations for various occasions
+    - Start with basic pieces and add statement accessories to elevate the look
+    """)
+
+if st.button("Analyze Style"):
+    if not urls_input:
+        st.error("Please enter a URL")
+    else:
+        if input_type == "Individual Pins":
+            urls = [url.strip() for url in urls_input.split('\n') if url.strip()]
+            if not urls:
+                st.error("Please enter at least one valid URL")
+            else:
+                results = analyze_board_with_progress(urls)
+                if results["analyses"]:
+                    display_style_summary(results["colors"], results["analyses"])
+        else:
+            # Extract pins from board
+            with st.spinner("Extracting pins from board..."):
+                success, board_pins, error = extract_pins_from_board(urls_input)
+                if not success:
+                    st.error(f"Error processing board: {error}")
+                    st.stop()
                 
-                cols = st.columns(8)
-                for i, (color, count) in enumerate(top_colors):
-                    cols[i].markdown(
-                        f'<div style="background-color: {color}; height: 50px; border-radius: 5px;"></div>',
-                        unsafe_allow_html=True
-                    )
-            
-            # Aggregate key pieces
-            all_pieces = [piece for analysis in all_analyses for piece in analysis.get("analysis", {}).get("key_pieces", [])]
-            common_pieces = Counter(all_pieces).most_common(8)
-            
-            if common_pieces:
-                st.write("### 🛍️ Signature Pieces")
-                for piece, count in common_pieces:
-                    frequency = f"(Found in {count} {'image' if count == 1 else 'images'})"
-                    st.write(f"- {piece} {frequency}")
-            
-            # Aggregate hair styles
-            all_hair = [style for analysis in all_analyses for style in analysis.get("analysis", {}).get("hair_style", [])]
-            common_hair = Counter(all_hair).most_common(5)
-            
-            if common_hair:
-                st.write("### 💇‍♀️ Defining Hair Styles")
-                for style, count in common_hair:
-                    frequency = f"(Found in {count} {'image' if count == 1 else 'images'})"
-                    st.write(f"- {style} {frequency}")
-            
-            # Aggregate style elements
-            all_elements = [elem for analysis in all_analyses for elem in analysis.get("analysis", {}).get("style_elements", [])]
-            common_elements = Counter(all_elements).most_common(5)
-            
-            if common_elements:
-                st.write("### 👗 Overall Style Direction")
-                for element, count in common_elements:
-                    frequency = f"(Found in {count} {'image' if count == 1 else 'images'})"
-                    st.write(f"- {element} {frequency}")
-            
-            # Aggregate all recommendations
-            all_outfits = []
-            all_hair_ideas = []
-            all_makeup_tips = []
-            all_accessory_ideas = []
-            
-            for analysis in all_analyses:
-                recs = analysis.get("recommendations", {})
-                all_outfits.extend(recs.get("outfit_combos", []))
-                all_hair_ideas.extend(recs.get("hair_suggestions", []))
-                all_makeup_tips.extend(recs.get("makeup_tips", []))
-                all_accessory_ideas.extend(recs.get("accessory_ideas", []))
-            
-            # Display aggregated recommendations
-            st.write("### 💫 Style Recommendations")
-            
-            if all_outfits:
-                st.write("#### 👔 Top Outfit Combinations")
-                outfit_counts = Counter(all_outfits).most_common(6)
-                for outfit, count in outfit_counts:
-                    frequency = f"(Suggested {count} {'time' if count == 1 else 'times'})"
-                    st.write(f"- {outfit} {frequency}")
-            
-            if all_hair_ideas:
-                st.write("#### 💁‍♀️ Recommended Hair Styles")
-                hair_counts = Counter(all_hair_ideas).most_common(4)
-                for hair, count in hair_counts:
-                    frequency = f"(Suggested {count} {'time' if count == 1 else 'times'})"
-                    st.write(f"- {hair} {frequency}")
-            
-            if all_makeup_tips:
-                st.write("#### 💄 Makeup Suggestions")
-                makeup_counts = Counter(all_makeup_tips).most_common(4)
-                for makeup, count in makeup_counts:
-                    frequency = f"(Suggested {count} {'time' if count == 1 else 'times'})"
-                    st.write(f"- {makeup} {frequency}")
-            
-            if all_accessory_ideas:
-                st.write("#### 👜 Accessory Ideas")
-                accessory_counts = Counter(all_accessory_ideas).most_common(5)
-                for accessory, count in accessory_counts:
-                    frequency = f"(Suggested {count} {'time' if count == 1 else 'times'})"
-                    st.write(f"- {makeup} {frequency}")
-            
-            if all_accessory_ideas:
-                st.write("#### 👜 Accessory Ideas")
-                accessory_counts = Counter(all_accessory_ideas).most_common(5)
-                for accessory, count in accessory_counts:
-                    frequency = f"(Suggested {count} {'time' if count == 1 else 'times'})"
-                    st.write(f"- {accessory} {frequency}")
-            
-            # Add final style tips
-            st.write("### 💭 Styling Tips")
-            st.write("""
-            - Mix and match the suggested pieces to create your own unique combinations
-            - Use the color palette as a guide when shopping for new items
-            - Try different hair and makeup combinations for various occasions
-            - Start with basic pieces and add statement accessories to elevate the look
-            """)
+                if not board_pins:
+                    st.error("No pins found in board")
+                    st.stop()
+                
+                if len(board_pins) > 10:
+                    st.write("⚠️ Analyzing first 10 pins for performance reasons")
+                    board_pins = board_pins[:10]
+                
+                st.write(f"Found {len(board_pins)} pins to analyze")
+                
+                # Analyze board with progress tracking
+                results = analyze_board_with_progress(board_pins)
+                
+                if results["analyses"]:
+                    display_style_summary(results["colors"], results["analyses"])
 
 st.markdown("---")
-st.write("Note: For best results, use direct image URLs from Pinterest pins.")
-
-# Add sidebar with instructions
-with st.sidebar:
-    st.write("### How to Use")
-    st.write("""
-    1. Find Pinterest pins that represent your desired style
-    2. Copy the Pinterest URLs
-    3. Paste URLs (one per line) in the text box
-    4. Click 'Analyze Style' to get:
-        - Individual image analysis
-        - Overall style profile
-        - Personalized recommendations
-        - Styling tips
-    """)
-    
-    st.write("### Tips for Best Results")
-    st.write("""
-    - Use clear, full-body outfit images
-    - Include 3-5 images for better recommendations
-    - Choose images with similar style direction
-    - Include different angles/variations of the style
-    """)
-                   
+st.write("Note: For best results, use clear, front-facing outfit images.")
