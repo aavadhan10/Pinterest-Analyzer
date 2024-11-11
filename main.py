@@ -8,6 +8,9 @@ from collections import Counter
 import json
 from anthropic import Anthropic
 import base64
+import re
+from bs4 import BeautifulSoup
+import urllib.parse
 
 st.title("Pinterest Style Analyzer")
 st.write("Enter Pinterest image URLs to analyze their style")
@@ -15,15 +18,64 @@ st.write("Enter Pinterest image URLs to analyze their style")
 # Initialize Anthropic client
 anthropic = Anthropic(api_key=st.secrets["ANTHROPIC_API_KEY"])
 
+def extract_pinterest_image_url(pin_url):
+    """Extract the actual image URL from a Pinterest pin URL"""
+    try:
+        # Add headers to mimic a browser request
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+        }
+        
+        # Get the Pinterest page content
+        response = requests.get(pin_url, headers=headers)
+        response.raise_for_status()
+        
+        # Parse the HTML
+        soup = BeautifulSoup(response.text, 'html.parser')
+        
+        # Look for image URLs in various Pinterest formats
+        # Method 1: Look for og:image meta tag
+        og_image = soup.find('meta', property='og:image')
+        if og_image and og_image.get('content'):
+            return True, og_image['content'], None
+            
+        # Method 2: Look for high-res image tags
+        images = soup.find_all('img', {'src': re.compile(r'https://i\.pinimg\.com/.*?\.jpg')})
+        if images:
+            # Sort by size (looking for largest version) and get the first one
+            image_urls = [img['src'] for img in images]
+            # Prefer originals or larger sizes
+            for url in image_urls:
+                if 'originals' in url or '736x' in url:
+                    return True, url, None
+            return True, image_urls[0], None
+        
+        return False, None, "Could not find image URL in Pinterest page"
+        
+    except Exception as e:
+        return False, None, f"Error extracting Pinterest image: {str(e)}"
+
 def validate_image_url(url):
     """Validate if URL returns a valid image"""
     try:
-        response = requests.get(url, timeout=10)
-        response.raise_for_status()  # Raise exception for bad status codes
+        # Check if it's a Pinterest URL
+        if 'pinterest.com' in url:
+            success, image_url, error = extract_pinterest_image_url(url)
+            if not success:
+                return False, None, error
+            url = image_url
+        
+        # Add headers to mimic a browser request
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+        }
+        
+        response = requests.get(url, headers=headers, timeout=10)
+        response.raise_for_status()
         
         # Check content type
         content_type = response.headers.get('content-type', '')
-        if not content_type.startswith('image/'):
+        if not any(img_type in content_type.lower() for img_type in ['image/', 'application/octet-stream']):
             return False, None, "URL does not point to an image"
         
         return True, response.content, None
