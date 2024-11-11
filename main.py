@@ -118,13 +118,24 @@ def analyze_with_claude(image):
         image.save(buffered, format="JPEG")
         base64_image = base64.b64encode(buffered.getvalue()).decode('utf-8')
         
-        prompt = """As a fashion stylist, analyze this image and provide insights about:
-        1. Main style elements
-        2. Color palette description
-        3. Occasion appropriateness
-        4. Key pieces identified
+        prompt = """Analyze this image as a style expert. Focus on identifying:
+
+        1. Key fashion pieces/items and their defining features (e.g., 'cropped leather jacket with silver hardware', 'high-waisted wide-leg trousers')
+        2. Color scheme and significant color combinations
+        3. Hair style and notable hair features (e.g., 'long layers with face-framing pieces', 'slicked-back low bun')
+        4. Notable style elements (e.g., 'minimalist Scandinavian', 'Y2K revival', '90s grunge')
+        5. Accessories and how they complete the look
+
+        Format response as JSON with these keys: 
+        {
+            "key_pieces": ["item1", "item2"],
+            "color_scheme": ["color1", "color2"],
+            "hair_style": ["feature1", "feature2"],
+            "style_elements": ["element1", "element2"],
+            "accessories": ["accessory1", "accessory2"]
+        }
         
-        Format as JSON with these keys: style_elements, color_description, occasions, key_pieces"""
+        Be specific and descriptive in identifying each element."""
         
         response = anthropic.beta.messages.create(
             model="claude-3-sonnet-20240229",
@@ -201,23 +212,33 @@ if st.button("Analyze Style") and image_urls:
                     all_analyses.append(analysis)
                 
                 # Display individual image analysis
-                st.write("### Image Analysis")
-                
-                # Color palette
-                if colors:
-                    st.write("Color Palette:")
-                    cols = st.columns(5)
-                    for idx, color in enumerate(colors[:5]):
-                        cols[idx].markdown(
-                            f'<div style="background-color: {color["hex"]}; height: 50px; border-radius: 5px;"></div>',
-                            unsafe_allow_html=True
-                        )
-                
-                # Style details
+                st.write("### Style Analysis")
+                    
                 if analysis:
-                    st.write("Style Elements:", ", ".join(analysis["style_elements"]))
-                    st.write("Suitable for:", ", ".join(analysis["occasions"]))
-                    st.write("Key Pieces:", ", ".join(analysis["key_pieces"]))
+                    if analysis.get("key_pieces"):
+                        st.write("🛍️ **Key Pieces:**")
+                        for piece in analysis["key_pieces"]:
+                            st.write(f"- {piece}")
+                    
+                    if analysis.get("color_scheme"):
+                        st.write("🎨 **Color Scheme:**")
+                        for color in analysis["color_scheme"]:
+                            st.write(f"- {color}")
+                    
+                    if analysis.get("hair_style"):
+                        st.write("💇‍♀️ **Hair Style:**")
+                        for style in analysis["hair_style"]:
+                            st.write(f"- {style}")
+                    
+                    if analysis.get("accessories"):
+                        st.write("✨ **Accessories:**")
+                        for accessory in analysis["accessories"]:
+                            st.write(f"- {accessory}")
+                    
+                    if analysis.get("style_elements"):
+                        st.write("👗 **Style Elements:**")
+                        for element in analysis["style_elements"]:
+                            st.write(f"- {element}")
                 
                 st.markdown("---")
                 
@@ -226,11 +247,11 @@ if st.button("Analyze Style") and image_urls:
                 continue
         
         if all_analyses:
-            st.write("## Overall Style Summary")
+            st.write("## 📊 Overall Style Profile")
             
             # Show dominant color palette
             if all_colors:
-                st.write("### Dominant Colors")
+                st.write("### 🎨 Color Palette")
                 color_counts = Counter([color['hex'] for color in all_colors])
                 top_colors = color_counts.most_common(8)
                 
@@ -241,21 +262,45 @@ if st.button("Analyze Style") and image_urls:
                         unsafe_allow_html=True
                     )
             
+            # Aggregate key pieces
+            all_pieces = [piece for analysis in all_analyses for piece in analysis.get("key_pieces", [])]
+            common_pieces = Counter(all_pieces).most_common(8)
+            
+            if common_pieces:
+                st.write("### 🛍️ Signature Pieces")
+                for piece, count in common_pieces:
+                    frequency = f"(Found in {count} {'image' if count == 1 else 'images'})"
+                    st.write(f"- {piece} {frequency}")
+            
+            # Aggregate hair styles
+            all_hair = [style for analysis in all_analyses for style in analysis.get("hair_style", [])]
+            common_hair = Counter(all_hair).most_common(5)
+            
+            if common_hair:
+                st.write("### 💇‍♀️ Defining Hair Styles")
+                for style, count in common_hair:
+                    frequency = f"(Found in {count} {'image' if count == 1 else 'images'})"
+                    st.write(f"- {style} {frequency}")
+            
+            # Aggregate accessories
+            all_accessories = [acc for analysis in all_analyses for acc in analysis.get("accessories", [])]
+            common_accessories = Counter(all_accessories).most_common(6)
+            
+            if common_accessories:
+                st.write("### ✨ Key Accessories")
+                for acc, count in common_accessories:
+                    frequency = f"(Found in {count} {'image' if count == 1 else 'images'})"
+                    st.write(f"- {acc} {frequency}")
+            
             # Aggregate style elements
-            all_elements = [elem for analysis in all_analyses for elem in analysis["style_elements"]]
+            all_elements = [elem for analysis in all_analyses for elem in analysis.get("style_elements", [])]
             common_elements = Counter(all_elements).most_common(5)
             
-            st.write("### Common Style Elements")
-            for element, count in common_elements:
-                st.write(f"- {element}")
-            
-            # Aggregate occasions
-            all_occasions = [occ for analysis in all_analyses for occ in analysis["occasions"]]
-            common_occasions = Counter(all_occasions).most_common(3)
-            
-            st.write("### Best Suited For")
-            for occasion, count in common_occasions:
-                st.write(f"- {occasion}")
+            if common_elements:
+                st.write("### 👗 Overall Style Direction")
+                for element, count in common_elements:
+                    frequency = f"(Found in {count} {'image' if count == 1 else 'images'})"
+                    st.write(f"- {element} {frequency}")
 
 st.markdown("---")
 st.write("Note: For best results, use direct image URLs from Pinterest pins.")
