@@ -367,7 +367,6 @@ if st.button("Analyze Style") and image_urls:
                 st.write("#### 💄 Makeup Suggestions")
                 makeup_counts = Counter(all_makeup_tips).most_common(4)
                 for makeup, count in makeup_counts:
-                    frequency = f"
                     frequency = f"(Suggested {count} {'time' if count == 1 else 'times'})"
                     st.write(f"- {makeup} {frequency}")
             
