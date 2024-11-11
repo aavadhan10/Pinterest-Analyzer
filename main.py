@@ -96,7 +96,6 @@ with st.sidebar:
         
         if not pin_urls:
             return False, None, "No pins found in board"
-        
         return True, pin_urls, None
         
     except Exception as e:
