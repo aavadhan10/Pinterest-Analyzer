@@ -126,30 +126,28 @@ def analyze_with_claude(image):
         
         Format as JSON with these keys: style_elements, color_description, occasions, key_pieces"""
         
-        messages = [
-            {
-                "role": "user",
-                "content": [
-                    {
-                        "type": "text",
-                        "text": prompt
-                    },
-                    {
-                        "type": "image",
-                        "source": {
-                            "type": "base64",
-                            "media_type": "image/jpeg",
-                            "data": base64_image
-                        }
-                    }
-                ]
-            }
-        ]
-        
-        response = anthropic.messages.create(
+        response = anthropic.beta.messages.create(
             model="claude-3-sonnet-20240229",
             max_tokens=1000,
-            messages=messages
+            messages=[
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": prompt
+                        },
+                        {
+                            "type": "image",
+                            "source": {
+                                "type": "base64",
+                                "media_type": "image/jpeg",
+                                "data": base64_image
+                            }
+                        }
+                    ]
+                }
+            ]
         )
         
         try:
