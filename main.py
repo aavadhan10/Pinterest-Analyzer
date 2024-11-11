@@ -62,7 +62,7 @@ with st.sidebar:
     - Larger boards may take longer to process
     """)
     def extract_pins_from_board(board_url):
-    """Extract all pin URLs from a Pinterest board"""
+        """Extract all pin URLs from a Pinterest board"""
     try:
         # Add headers to mimic a browser request
         headers = {
